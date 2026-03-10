@@ -1,23 +1,12 @@
-from datasets import load_dataset, DatasetDict, Dataset
+from datasets import load_dataset, DatasetDict
 import os
 
 DATA_DIR = "../data"
 os.makedirs(DATA_DIR, exist_ok=True)
 
-# Load TinyStories from local files (already downloaded in ch01)
-TRAIN_FILE = os.path.join(DATA_DIR, "tinystories_train.txt")
-VAL_FILE   = os.path.join(DATA_DIR, "tinystories_val.txt")
-
-print("Loading TinyStories from local files …")
-with open(TRAIN_FILE, encoding="utf-8") as f:
-    train_stories = [{"text": line.strip()} for line in f if line.strip()]
-with open(VAL_FILE, encoding="utf-8") as f:
-    val_stories = [{"text": line.strip()} for line in f if line.strip()]
-
-ds = DatasetDict({
-    "train":      Dataset.from_list(train_stories),
-    "validation": Dataset.from_list(val_stories),
-})
+# Load the full TinyStories dataset (downloads once, caches locally)
+print("Loading TinyStories …")
+ds = load_dataset("roneneldan/TinyStories")
 
 print(ds)
 print(f"\nTrain examples : {len(ds['train']):,}")
@@ -163,33 +152,33 @@ print(f"Sample tokens: {tokenizer.decode(xb[0][:30].tolist())!r}")
 
 from datasets import load_dataset
 
-# Streaming mode: use local file as a simple iterable for demonstration
+# Streaming mode: data is downloaded and processed on-the-fly
 # Useful when the full dataset doesn't fit on disk or in RAM
+stream_ds = load_dataset("roneneldan/TinyStories", split="train", streaming=True)
+stream_ds = stream_ds.shuffle(seed=42, buffer_size=10_000)
+
+# Wrap in a PyTorch IterableDataset for use with DataLoader
 from torch.utils.data import IterableDataset
 
 class StreamingTinyStories(IterableDataset):
-    def __init__(self, filepath, tokenizer, block_size=512):
-        self.filepath   = filepath
+    def __init__(self, hf_iterable_dataset, tokenizer, block_size=512):
+        self.ds         = hf_iterable_dataset
         self.tokenizer  = tokenizer
         self.block_size = block_size
         self.buffer     = []
 
     def __iter__(self):
-        with open(self.filepath, encoding="utf-8") as f:
-            for line in f:
-                text = line.strip()
-                if not text:
-                    continue
-                ids = self.tokenizer.encode(text) + [self.tokenizer.eos_token_id]
-                self.buffer.extend(ids)
-                while len(self.buffer) >= self.block_size + 1:
-                    chunk = self.buffer[:self.block_size + 1]
-                    self.buffer = self.buffer[self.block_size:]
-                    x = torch.tensor(chunk[:-1], dtype=torch.long)
-                    y = torch.tensor(chunk[1:],  dtype=torch.long)
-                    yield x, y
+        for example in self.ds:
+            ids = self.tokenizer.encode(example["text"]) + [self.tokenizer.eos_token_id]
+            self.buffer.extend(ids)
+            while len(self.buffer) >= self.block_size + 1:
+                chunk = self.buffer[:self.block_size + 1]
+                self.buffer = self.buffer[self.block_size:]
+                x = torch.tensor(chunk[:-1], dtype=torch.long)
+                y = torch.tensor(chunk[1:],  dtype=torch.long)
+                yield x, y
 
-stream_dataset = StreamingTinyStories(TRAIN_FILE, tokenizer, block_size=256)
+stream_dataset = StreamingTinyStories(stream_ds, tokenizer, block_size=256)
 stream_loader  = DataLoader(stream_dataset, batch_size=4)
 
 # Get one batch from the stream

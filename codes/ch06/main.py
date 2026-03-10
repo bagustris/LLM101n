@@ -2,7 +2,7 @@ import os
 import re
 from collections import defaultdict
 
-DATA_DIR   = "../data"
+DATA_DIR   = "data"
 TRAIN_FILE = os.path.join(DATA_DIR, "tinystories_train.txt")
 os.makedirs(DATA_DIR, exist_ok=True)
 

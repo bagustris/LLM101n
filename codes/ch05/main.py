@@ -61,9 +61,6 @@ class TransformerBlock(nn.Module):
 
         # Self-attention with residual
         normed = self.ln1(x)
-        # Generate causal mask if not provided
-        if mask is None:
-            mask = nn.Transformer.generate_square_subsequent_mask(T, device=x.device)
         attn_out, _ = self.attn(normed, normed, normed,
                                 attn_mask=mask, is_causal=True)
         x = x + attn_out
@@ -157,7 +154,7 @@ class GPT(nn.Module):
         return idx
 
 
-DATA_DIR   = "../data"
+DATA_DIR   = "data"
 TRAIN_FILE = os.path.join(DATA_DIR, "tinystories_train.txt")
 VAL_FILE   = os.path.join(DATA_DIR, "tinystories_val.txt")
 os.makedirs(DATA_DIR, exist_ok=True)
@@ -195,7 +192,7 @@ device    = "cuda" if torch.cuda.is_available() else "cpu"
 BLOCK_SIZE = 128   # context length
 BATCH_SIZE = 32
 LR         = 3e-4
-STEPS      = 100
+STEPS      = 3_000
 
 model = GPT(
     vocab_size = vocab_size,

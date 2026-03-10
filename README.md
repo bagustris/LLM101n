@@ -14,23 +14,23 @@ The training corpus throughout is [TinyStories](https://huggingface.co/datasets/
 
 | # | Chapter | Key concepts |
 |---|---------|--------------|
-| 01 | **Bigram Language Model** | language modeling, NLL loss, character-level tokenization |
-| 02 | **Micrograd** | scalar autodiff, backpropagation from scratch |
-| 03 | **N-gram MLP** | multi-layer perceptron, matmul, GELU |
-| 04 | **Attention** | self-attention, softmax, positional encoding |
-| 05 | **Transformer** | GPT-2 architecture, residual connections, LayerNorm |
-| 06 | **Tokenization** | Byte Pair Encoding (BPE), minBPE |
-| 07 | **Optimization** | weight initialization, AdamW, LR schedules |
-| 08 | **Need for Speed I: Device** | CPU vs GPU, device-agnostic PyTorch |
-| 09 | **Need for Speed II: Precision** | mixed precision, fp16, bf16, fp8 |
-| 10 | **Need for Speed III: Distributed** | DDP, ZeRO, DeepSpeed |
-| 11 | **Datasets** | data loading, synthetic data generation |
-| 12 | **Inference I: KV-Cache** | key-value cache, autoregressive generation |
-| 13 | **Inference II: Quantization** | INT8/INT4 quantization |
-| 14 | **Finetuning I: SFT** | supervised finetuning, PEFT, LoRA, chat format |
-| 15 | **Finetuning II: RL** | RLHF, PPO, DPO |
-| 16 | **Deployment** | FastAPI server, streaming, web UI |
-| 17 | **Multimodal** | VQVAE, diffusion transformer, image+text |
+| 01 | [**Bigram Language Model**](ch01.md) | language modeling, NLL loss, character-level tokenization |
+| 02 | [**Micrograd**](ch02.md) | scalar autodiff, backpropagation from scratch |
+| 03 | [**N-gram MLP**](ch03.md) | multi-layer perceptron, matmul, GELU |
+| 04 | [**Attention**](ch04.md) | self-attention, softmax, positional encoding |
+| 05 | [**Transformer**](ch05.md) | GPT-2 architecture, residual connections, LayerNorm |
+| 06 | [**Tokenization**](ch06.md) | Byte Pair Encoding (BPE), minBPE |
+| 07 | [**Optimization**](ch07.md) | weight initialization, AdamW, LR schedules |
+| 08 | [**Need for Speed I: Device**](ch08.md) | CPU vs GPU, device-agnostic PyTorch |
+| 09 | [**Need for Speed II: Precision**](ch09.md) | mixed precision, fp16, bf16, fp8 |
+| 10 | [**Need for Speed III: Distributed**](ch10.md) | DDP, ZeRO, DeepSpeed |
+| 11 | [**Datasets**](ch11.md) | data loading, synthetic data generation |
+| 12 | [**Inference I: KV-Cache**](ch12.md) | key-value cache, autoregressive generation |
+| 13 | [**Inference II: Quantization**](ch13.md) | INT8/INT4 quantization |
+| 14 | [**Finetuning I: SFT**](ch14.md) | supervised finetuning, PEFT, LoRA, chat format |
+| 15 | [**Finetuning II: RL**](ch15.md) | RLHF, PPO, DPO |
+| 16 | [**Deployment**](ch16.md) | FastAPI server, streaming, web UI |
+| 17 | [**Multimodal**](ch17.md) | VQVAE, diffusion transformer, image+text |
 
 ---
 

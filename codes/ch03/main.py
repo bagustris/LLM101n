@@ -1,7 +1,7 @@
 import os
 from datasets import load_dataset
 
-DATA_DIR   = "../data"
+DATA_DIR   = "data"
 TRAIN_FILE = os.path.join(DATA_DIR, "tinystories_train.txt")
 VAL_FILE   = os.path.join(DATA_DIR, "tinystories_val.txt")
 os.makedirs(DATA_DIR, exist_ok=True)
@@ -121,11 +121,10 @@ class NGramMLP(nn.Module):
         """Autoregressively sample one story."""
         torch.manual_seed(seed)
         self.eval()
-        device = next(self.parameters()).device
         context = [stoi['.']] * CONTEXT_LEN   # start with padding tokens
         result  = []
         for _ in range(max_chars):
-            x = torch.tensor([context], dtype=torch.long, device=device)
+            x = torch.tensor([context], dtype=torch.long)
             logits = self(x)[0]               # (vocab_size,)
             probs  = torch.softmax(logits / temperature, dim=-1)
             idx    = torch.multinomial(probs, 1).item()
@@ -154,7 +153,7 @@ optimiser = torch.optim.AdamW(model.parameters(), lr=1e-3, weight_decay=1e-4)
 loss_fn   = nn.CrossEntropyLoss()
 
 BATCH_SIZE = 256
-STEPS      = 200
+STEPS      = 5_000
 
 Xtr, Ytr = Xtr.to(device), Ytr.to(device)
 Xva, Yva = Xva.to(device), Yva.to(device)

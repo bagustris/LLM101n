@@ -77,11 +77,9 @@ vocab_size = len(chars_with_special)
 
 N = torch.zeros((vocab_size, vocab_size), dtype=torch.int32)
 
-# Iterate over every story in the training file (limit to first 5000 for speed)
+# Iterate over every story in the training file
 with open(TRAIN_FILE, "r", encoding="utf-8") as f:
-    for story_count, line in enumerate(f):
-        if story_count >= 5000:
-            break
+    for line in f:
         story = line.strip()
         if not story:
             continue
@@ -153,8 +151,8 @@ def compute_nll(P, stoi, filepath: str, max_chars: int = 100_000) -> float:
     nll = -total_log_prob / n
     return nll
 
-train_nll = compute_nll(P, stoi, TRAIN_FILE, max_chars=10_000)
-val_nll   = compute_nll(P, stoi, VAL_FILE, max_chars=10_000)
+train_nll = compute_nll(P, stoi, TRAIN_FILE)
+val_nll   = compute_nll(P, stoi, VAL_FILE)
 
 print(f"Train NLL: {train_nll:.4f}")
 print(f"Val   NLL: {val_nll:.4f}")

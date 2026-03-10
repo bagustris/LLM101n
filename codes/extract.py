@@ -2,8 +2,8 @@ import re
 import os
 import pathlib
 
-chapters_dir = pathlib.Path("/home/bagus/github/LLM101n")
-codes_dir = pathlib.Path("/home/bagus/github/LLM101n/codes")
+chapters_dir = pathlib.Path(".")
+codes_dir = pathlib.Path("codes")
 
 for n in range(1, 18):
     md_path = chapters_dir / f"ch{n:02d}.md"
