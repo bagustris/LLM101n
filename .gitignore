@@ -1,0 +1,47 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+*.so
+
+# Virtual environment
+.venv/
+venv/
+env/
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb
+
+# Data & model files
+codes/data/tinystories_train.txt
+codes/data/tinystories_val.txt
+codes/data/cifar-10-batches-py/
+codes/data/synthetic_stories.txt
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+
+# Logs
+*.log
+
+# compressed files
+*.tar.gz
+*.zip
+*.rar
+
+# model
+*.pt
+*.safetensors
+*.png

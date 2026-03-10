@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>LLM101n Story Generator</title>
+<style>
+  body { font-family: Georgia, serif; max-width: 800px; margin: 40px auto; padding: 20px; }
+  textarea { width: 100%; height: 80px; font-size: 16px; padding: 8px; }
+  button  { padding: 10px 24px; font-size: 16px; cursor: pointer; margin: 4px; }
+  #output { white-space: pre-wrap; background: #f8f8f8; padding: 16px;
+            border-radius: 6px; min-height: 100px; font-size: 15px; line-height: 1.6; }
+  .controls { display: flex; gap: 12px; align-items: center; margin: 8px 0; }
+  label { font-size: 14px; }
+</style>
+</head>
+<body>
+<h1>📖 TinyStories Generator</h1>
+<textarea id="prompt" placeholder="Once upon a time…">Once upon a time</textarea>
+<div class="controls">
+  <label>Temp: <input type="range" id="temp" min="0.1" max="2.0" step="0.1" value="0.8">
+    <span id="tempVal">0.8</span></label>
+  <label>Max tokens: <input type="number" id="maxTokens" value="200" min="50" max="500"></label>
+  <button onclick="streamGenerate()">▶ Stream</button>
+  <button onclick="generateOnce()">⚡ Generate</button>
+  <button onclick="document.getElementById('output').textContent=''">🗑 Clear</button>
+</div>
+<div id="output">Output will appear here…</div>
+
+<script>
+document.getElementById("temp").addEventListener("input", function() {
+  document.getElementById("tempVal").textContent = this.value;
+});
+
+async function streamGenerate() {
+  const prompt    = document.getElementById("prompt").value;
+  const temp      = parseFloat(document.getElementById("temp").value);
+  const maxTokens = parseInt(document.getElementById("maxTokens").value);
+  const output    = document.getElementById("output");
+  output.textContent = prompt;
+
+  const response = await fetch("/stream", {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({prompt, temperature: temp, max_new_tokens: maxTokens})
+  });
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  while (true) {
+    const {done, value} = await reader.read();
+    if (done) break;
+    const text = decoder.decode(value);
+    for (const line of text.split("\n")) {
+      if (line.startsWith("data: ") && line !== "data: [DONE]") {
+        const data = JSON.parse(line.slice(6));
+        output.textContent += data.token;
+      }
+    }
+  }
+}
+
+async function generateOnce() {
+  const prompt    = document.getElementById("prompt").value;
+  const temp      = parseFloat(document.getElementById("temp").value);
+  const maxTokens = parseInt(document.getElementById("maxTokens").value);
+  const output    = document.getElementById("output");
+  output.textContent = "Generating…";
+
+  const resp = await fetch("/generate", {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({prompt, temperature: temp, max_new_tokens: maxTokens})
+  });
+  const data = await resp.json();
+  output.textContent = data.generated_text;
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,371 @@
+# model_utils.py — save this in your project directory
+
+import torch
+import torch.nn as nn
+import os
+from transformers import AutoModelForCausalLM, AutoTokenizer
+
+def load_model_for_inference(
+    model_name: str = "gpt2",
+    device: str = None,
+    dtype: torch.dtype = torch.float16,
+):
+    """
+    Load a HuggingFace model optimised for inference.
+    Returns (model, tokenizer).
+    """
+    if device is None:
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+
+    print(f"Loading {model_name} on {device} ({dtype}) …")
+    tokenizer = AutoTokenizer.from_pretrained(model_name)
+    tokenizer.pad_token = tokenizer.eos_token
+
+    model = AutoModelForCausalLM.from_pretrained(
+        model_name,
+        torch_dtype=dtype,
+        device_map="auto" if torch.cuda.is_available() else None,
+    )
+    model.eval()
+
+    if not torch.cuda.is_available():
+        model = model.to(device)
+
+    # Compile for faster inference (PyTorch 2.0+)
+    try:
+        model = torch.compile(model, mode="reduce-overhead")
+        print("Model compiled with torch.compile")
+    except Exception:
+        pass   # compile not available in all environments
+
+    return model, tokenizer
+
+
+def generate_tokens(
+    model,
+    tokenizer,
+    prompt: str,
+    max_new_tokens: int = 200,
+    temperature: float = 0.8,
+    top_k: int = 40,
+    top_p: float = 0.95,
+) -> list[int]:
+    """Run greedy/sampling generation, return list of new token IDs."""
+    device = next(model.parameters()).device
+    inputs = tokenizer(prompt, return_tensors="pt").to(device)
+
+    with torch.no_grad():
+        output_ids = model.generate(
+            **inputs,
+            max_new_tokens   = max_new_tokens,
+            temperature      = temperature,
+            top_k            = top_k,
+            top_p            = top_p,
+            do_sample        = True,
+            pad_token_id     = tokenizer.eos_token_id,
+        )
+    # Only return newly generated tokens (not the prompt)
+    new_ids = output_ids[0, inputs["input_ids"].shape[1]:].tolist()
+    return new_ids
+
+
+print("model_utils.py: defined load_model_for_inference and generate_tokens")
+
+
+# server.py — run with: uvicorn server:app --host 0.0.0.0 --port 8000
+
+FASTAPI_APP = '''
+import asyncio
+import json
+import torch
+from fastapi import FastAPI, HTTPException
+from fastapi.responses import StreamingResponse, HTMLResponse
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
+from transformers import AutoModelForCausalLM, AutoTokenizer, TextIteratorStreamer
+from threading import Thread
+import os
+
+app = FastAPI(title="LLM101n Story Generator", version="1.0")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Global model/tokenizer (loaded once at startup)
+MODEL_NAME = os.environ.get("MODEL_NAME", "gpt2")
+tokenizer  = AutoTokenizer.from_pretrained(MODEL_NAME)
+tokenizer.pad_token = tokenizer.eos_token
+model = AutoModelForCausalLM.from_pretrained(
+    MODEL_NAME,
+    torch_dtype=torch.float16 if torch.cuda.is_available() else torch.float32,
+    device_map="auto" if torch.cuda.is_available() else None,
+)
+model.eval()
+DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+if not torch.cuda.is_available():
+    model = model.to(DEVICE)
+
+
+class GenerateRequest(BaseModel):
+    prompt:         str   = "Once upon a time"
+    max_new_tokens: int   = 200
+    temperature:    float = 0.8
+    top_k:          int   = 40
+
+
+@app.get("/")
+async def index():
+    """Serve the frontend HTML page."""
+    return HTMLResponse(open("frontend.html").read())
+
+
+@app.get("/health")
+async def health():
+    return {"status": "ok", "model": MODEL_NAME, "device": DEVICE}
+
+
+@app.post("/generate")
+async def generate(req: GenerateRequest):
+    """Generate text (non-streaming) — returns complete response at once."""
+    inputs = tokenizer(req.prompt, return_tensors="pt").to(DEVICE)
+    with torch.no_grad():
+        outputs = model.generate(
+            **inputs,
+            max_new_tokens = req.max_new_tokens,
+            temperature    = req.temperature,
+            top_k          = req.top_k,
+            do_sample      = True,
+            pad_token_id   = tokenizer.eos_token_id,
+        )
+    new_ids  = outputs[0, inputs["input_ids"].shape[1]:]
+    text_out = tokenizer.decode(new_ids, skip_special_tokens=True)
+    return {"generated_text": req.prompt + text_out, "tokens": len(new_ids)}
+
+
+@app.post("/stream")
+async def stream_generate(req: GenerateRequest):
+    """
+    Streaming generation via Server-Sent Events (SSE).
+    The client receives tokens as they are produced.
+    """
+    inputs   = tokenizer(req.prompt, return_tensors="pt").to(DEVICE)
+    streamer = TextIteratorStreamer(
+        tokenizer, skip_prompt=True, skip_special_tokens=True
+    )
+
+    generate_kwargs = dict(
+        **inputs,
+        max_new_tokens = req.max_new_tokens,
+        temperature    = req.temperature,
+        top_k          = req.top_k,
+        do_sample      = True,
+        pad_token_id   = tokenizer.eos_token_id,
+        streamer       = streamer,
+    )
+
+    # Run generation in a background thread (non-blocking)
+    thread = Thread(target=model.generate, kwargs=generate_kwargs)
+    thread.start()
+
+    async def event_generator():
+        for token_text in streamer:
+            yield f"data: {json.dumps({'token': token_text})}\\n\\n"
+            await asyncio.sleep(0)   # yield control to event loop
+        yield "data: [DONE]\\n\\n"
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
+'''
+
+import os
+os.makedirs("data", exist_ok=True)
+with open("../data/server.py", "w") as f:
+    f.write(FASTAPI_APP)
+print("Saved → data/server.py")
+print("Run with: cd data && uvicorn server:app --host 0.0.0.0 --port 8000")
+
+
+FRONTEND_HTML = '''<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>LLM101n Story Generator</title>
+<style>
+  body { font-family: Georgia, serif; max-width: 800px; margin: 40px auto; padding: 20px; }
+  textarea { width: 100%; height: 80px; font-size: 16px; padding: 8px; }
+  button  { padding: 10px 24px; font-size: 16px; cursor: pointer; margin: 4px; }
+  #output { white-space: pre-wrap; background: #f8f8f8; padding: 16px;
+            border-radius: 6px; min-height: 100px; font-size: 15px; line-height: 1.6; }
+  .controls { display: flex; gap: 12px; align-items: center; margin: 8px 0; }
+  label { font-size: 14px; }
+</style>
+</head>
+<body>
+<h1>📖 TinyStories Generator</h1>
+<textarea id="prompt" placeholder="Once upon a time…">Once upon a time</textarea>
+<div class="controls">
+  <label>Temp: <input type="range" id="temp" min="0.1" max="2.0" step="0.1" value="0.8">
+    <span id="tempVal">0.8</span></label>
+  <label>Max tokens: <input type="number" id="maxTokens" value="200" min="50" max="500"></label>
+  <button onclick="streamGenerate()">▶ Stream</button>
+  <button onclick="generateOnce()">⚡ Generate</button>
+  <button onclick="document.getElementById('output').textContent=''">🗑 Clear</button>
+</div>
+<div id="output">Output will appear here…</div>
+
+<script>
+document.getElementById("temp").addEventListener("input", function() {
+  document.getElementById("tempVal").textContent = this.value;
+});
+
+async function streamGenerate() {
+  const prompt    = document.getElementById("prompt").value;
+  const temp      = parseFloat(document.getElementById("temp").value);
+  const maxTokens = parseInt(document.getElementById("maxTokens").value);
+  const output    = document.getElementById("output");
+  output.textContent = prompt;
+
+  const response = await fetch("/stream", {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({prompt, temperature: temp, max_new_tokens: maxTokens})
+  });
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  while (true) {
+    const {done, value} = await reader.read();
+    if (done) break;
+    const text = decoder.decode(value);
+    for (const line of text.split("\\n")) {
+      if (line.startsWith("data: ") && line !== "data: [DONE]") {
+        const data = JSON.parse(line.slice(6));
+        output.textContent += data.token;
+      }
+    }
+  }
+}
+
+async function generateOnce() {
+  const prompt    = document.getElementById("prompt").value;
+  const temp      = parseFloat(document.getElementById("temp").value);
+  const maxTokens = parseInt(document.getElementById("maxTokens").value);
+  const output    = document.getElementById("output");
+  output.textContent = "Generating…";
+
+  const resp = await fetch("/generate", {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({prompt, temperature: temp, max_new_tokens: maxTokens})
+  });
+  const data = await resp.json();
+  output.textContent = data.generated_text;
+}
+</script>
+</body>
+</html>
+'''
+
+with open("../data/frontend.html", "w") as f:
+    f.write(FRONTEND_HTML)
+print("Saved → data/frontend.html")
+
+
+DOCKERFILE = '''# Dockerfile for LLM101n Story Generator
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Install Python dependencies
+RUN pip install --no-cache-dir \\
+    torch torchvision --index-url https://download.pytorch.org/whl/cpu \\
+    transformers fastapi uvicorn[standard] pydantic
+
+# Copy server files
+COPY data/server.py   ./server.py
+COPY data/frontend.html ./frontend.html
+
+# Expose the API port
+EXPOSE 8000
+
+# Download model at container build time (optional — can also lazy-load)
+RUN python -c "from transformers import AutoModelForCausalLM, AutoTokenizer; \\
+    AutoTokenizer.from_pretrained('gpt2'); \\
+    AutoModelForCausalLM.from_pretrained('gpt2')"
+
+ENV MODEL_NAME=gpt2
+
+CMD ["uvicorn", "server:app", "--host", "0.0.0.0", "--port", "8000"]
+'''
+
+with open("../data/Dockerfile", "w") as f:
+    f.write(DOCKERFILE)
+print("Saved → data/Dockerfile")
+print()
+print("Build and run:")
+print("  docker build -t llm101n-server data/")
+print("  docker run -p 8000:8000 llm101n-server")
+
+
+import torch
+import torch.nn as nn
+import os
+
+def load_custom_checkpoint(checkpoint_path: str, model: nn.Module,
+                            device: str = "cpu") -> nn.Module:
+    """
+    Load a locally saved model checkpoint (from Chapter 5).
+    """
+    if not os.path.exists(checkpoint_path):
+        print(f"Checkpoint not found: {checkpoint_path}")
+        print("Train the model in Chapter 5 first, or use a HuggingFace model.")
+        return model
+
+    state_dict = torch.load(checkpoint_path, map_location=device)
+    model.load_state_dict(state_dict)
+    model.eval()
+    print(f"Loaded checkpoint: {checkpoint_path}")
+    return model
+
+
+# If you saved the Chapter 5 GPT, you can load and serve it like this:
+gpt_checkpoint = "../data/gpt_tinystories.pt"
+if os.path.exists(gpt_checkpoint):
+    print(f"Found Chapter 5 checkpoint: {gpt_checkpoint}")
+    print("To serve it, import your GPT class and call load_custom_checkpoint()")
+else:
+    print("No Chapter 5 checkpoint found — run ch05.md first to create one.")
+    print("For now, the server uses GPT-2 from HuggingFace.")
+
+
+import time
+from transformers import AutoModelForCausalLM, AutoTokenizer
+
+print("Loading GPT-2 for throughput benchmark …")
+tok   = AutoTokenizer.from_pretrained("gpt2")
+tok.pad_token = tok.eos_token
+mdl   = AutoModelForCausalLM.from_pretrained("gpt2").eval()
+device = "cuda" if torch.cuda.is_available() else "cpu"
+mdl   = mdl.to(device)
+
+prompt = "Once upon a time there was a little"
+inputs = tok(prompt, return_tensors="pt").to(device)
+
+N_TOKENS = 100
+N_RUNS   = 3
+
+times = []
+for _ in range(N_RUNS):
+    t0 = time.perf_counter()
+    with torch.no_grad():
+        out = mdl.generate(**inputs, max_new_tokens=N_TOKENS,
+                           do_sample=False, pad_token_id=tok.eos_token_id)
+    if device == "cuda": torch.cuda.synchronize()
+    times.append(time.perf_counter() - t0)
+
+avg_s = sum(times) / N_RUNS
+print(f"Generated {N_TOKENS} tokens in {avg_s:.2f}s")
+print(f"Throughput: {N_TOKENS / avg_s:.1f} tokens/sec")
