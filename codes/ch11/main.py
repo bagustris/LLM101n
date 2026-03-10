@@ -1,246 +1,135 @@
-from datasets import load_dataset, DatasetDict
 import os
+import re
+import torch
+from torch.utils.data import Dataset, DataLoader, IterableDataset
 
 DATA_DIR = "../data"
-os.makedirs(DATA_DIR, exist_ok=True)
-
-# Load the full TinyStories dataset (downloads once, caches locally)
-print("Loading TinyStories …")
-ds = load_dataset("roneneldan/TinyStories")
-
-print(ds)
-print(f"\nTrain examples : {len(ds['train']):,}")
-print(f"Val   examples : {len(ds['validation']):,}")
-print(f"\nFirst story:\n{ds['train'][0]['text'][:300]}")
+TRAIN_FILE = os.path.join(DATA_DIR, "tinystories_train.txt")
+VAL_FILE   = os.path.join(DATA_DIR, "tinystories_val.txt")
 
 
-import matplotlib
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt
-import numpy as np
-
-# Sample story lengths from the training set
-print("Computing story length statistics …")
-sample_size = 10_000
-lengths = [len(ds['train'][i]['text']) for i in range(sample_size)]
-
-print(f"Mean   length : {np.mean(lengths):,.0f} chars")
-print(f"Median length : {np.median(lengths):,.0f} chars")
-print(f"Max    length : {max(lengths):,} chars")
-print(f"Min    length : {min(lengths):,} chars")
-
-plt.figure(figsize=(9, 4))
-plt.hist(lengths, bins=60, color="steelblue", edgecolor="white")
-plt.xlabel("Story length (characters)")
-plt.ylabel("Count")
-plt.title(f"TinyStories length distribution (n={sample_size:,})")
-plt.tight_layout()
-plt.savefig("../data/ch11_story_lengths.png", dpi=100)
-print("Saved → data/ch11_story_lengths.png")
+def is_valid_story(text: str) -> bool:
+    """Basic quality filter for TinyStories examples."""
+    if len(text) < 20 or len(text) > 5000:
+        return False
+    if not re.search(r"[.!?]", text):
+        return False
+    n_ascii = sum(c.isascii() for c in text)
+    if len(text) == 0 or n_ascii / len(text) < 0.8:
+        return False
+    return True
 
 
-from transformers import AutoTokenizer
-
-# Use the GPT-2 tokeniser (50 257 vocab BPE)
-tokenizer = AutoTokenizer.from_pretrained("gpt2")
-tokenizer.pad_token = tokenizer.eos_token   # GPT-2 has no pad token by default
-
-BLOCK_SIZE = 512   # number of tokens per training example
-
-def tokenize_and_chunk(examples: dict) -> dict:
-    """
-    Tokenise a batch of stories and concatenate them into fixed-length blocks.
-    Adds EOS token between stories.
-    """
-    # Tokenise all texts in the batch
+def tokenize_and_chunk(examples: dict, tokenizer, block_size: int = 512) -> dict:
+    """Tokenise a batch of stories and concatenate into fixed-length blocks."""
     tokens = tokenizer(
         examples["text"],
         add_special_tokens=True,
         truncation=False,
     )["input_ids"]
-
-    # Concatenate all token lists separated by EOS
     flat = []
     for ids in tokens:
         flat.extend(ids + [tokenizer.eos_token_id])
-
-    # Split into fixed-length chunks
-    input_ids = [flat[i : i + BLOCK_SIZE]
-                 for i in range(0, len(flat) - BLOCK_SIZE, BLOCK_SIZE)]
-
+    input_ids = [flat[i : i + block_size]
+                 for i in range(0, len(flat) - block_size, block_size)]
     return {"input_ids": input_ids}
 
-# Apply preprocessing (use num_proc for parallelism on larger datasets)
-print("Tokenising and chunking …")
-small_ds = ds["train"].select(range(5_000))
-tokenised = small_ds.map(
-    tokenize_and_chunk,
-    batched=True,
-    batch_size=500,
-    remove_columns=["text"],
-    desc="Tokenising",
-)
-print(f"Tokenised blocks: {len(tokenised):,}")
-print(f"Block shape example: {len(tokenised[0]['input_ids'])} tokens")
-
-
-import torch
-from torch.utils.data import Dataset, DataLoader
 
 class TinyStoriesDataset(Dataset):
     """
-    PyTorch Dataset that returns (input, target) pairs for
-    causal language modelling. Target is input shifted by one.
+    PyTorch Dataset that reads a text file and returns (input, target) pairs
+    for causal language modelling using character-level tokenization.
+    Target is input shifted by one.
     """
 
-    def __init__(self, hf_dataset, block_size: int = 512):
-        self.data       = hf_dataset
+    def __init__(self, filepath: str, block_size: int = 512):
         self.block_size = block_size
+        with open(filepath, "r", encoding="utf-8") as f:
+            text = f.read()
+        # Character-level tokenization using ord values
+        ids = [ord(c) % 256 for c in text]
+        # Split into blocks of block_size + 1
+        self.blocks = []
+        for i in range(0, len(ids) - block_size, block_size):
+            chunk = ids[i : i + block_size + 1]
+            self.blocks.append(chunk)
 
     def __len__(self) -> int:
-        return len(self.data)
+        return len(self.blocks)
 
     def __getitem__(self, idx: int):
-        ids = self.data[idx]["input_ids"]
-        x   = torch.tensor(ids[:-1], dtype=torch.long)   # context
-        y   = torch.tensor(ids[1:],  dtype=torch.long)   # targets (shifted by 1)
+        chunk = self.blocks[idx]
+        x = torch.tensor(chunk[:-1], dtype=torch.long)
+        y = torch.tensor(chunk[1:],  dtype=torch.long)
         return x, y
 
 
-# Instantiate train and validation datasets
-train_dataset = TinyStoriesDataset(tokenised)
-
-# Split 90/10 for demo purposes
-n_val  = len(train_dataset) // 10
-n_train = len(train_dataset) - n_val
-train_set, val_set = torch.utils.data.random_split(train_dataset, [n_train, n_val])
-
-print(f"Train blocks: {len(train_set):,}  |  Val blocks: {len(val_set):,}")
-
-
-def collate_fn(batch):
+def collate_fn(batch, pad_id: int = 0):
     """Pad variable-length sequences in a batch to the same length."""
     xs, ys = zip(*batch)
     max_len = max(x.size(0) for x in xs)
-    pad_id  = tokenizer.pad_token_id
-
     xs_padded = torch.stack([
-        torch.cat([x, torch.full((max_len - x.size(0),), pad_id)]) for x in xs
+        torch.cat([x, torch.full((max_len - x.size(0),), pad_id, dtype=torch.long)]) for x in xs
     ])
     ys_padded = torch.stack([
-        torch.cat([y, torch.full((max_len - y.size(0),), -100)])   for y in ys
+        torch.cat([y, torch.full((max_len - y.size(0),), -100, dtype=torch.long)]) for y in ys
     ])
-    return xs_padded, ys_padded   # -100 is ignored by cross-entropy
+    return xs_padded, ys_padded
 
-train_loader = DataLoader(
-    train_set,
-    batch_size  = 8,
-    shuffle     = True,
-    num_workers = 2,             # parallel data loading
-    pin_memory  = True,          # faster CPU→GPU transfer
-    drop_last   = True,          # ensure fixed batch sizes
-)
-
-val_loader = DataLoader(val_set, batch_size=8, shuffle=False, num_workers=2)
-
-# Inspect a batch
-xb, yb = next(iter(train_loader))
-print(f"Batch x shape: {xb.shape}  dtype: {xb.dtype}")
-print(f"Batch y shape: {yb.shape}  dtype: {yb.dtype}")
-print(f"Sample tokens: {tokenizer.decode(xb[0][:30].tolist())!r}")
-
-
-from datasets import load_dataset
-
-# Streaming mode: data is downloaded and processed on-the-fly
-# Useful when the full dataset doesn't fit on disk or in RAM
-stream_ds = load_dataset("roneneldan/TinyStories", split="train", streaming=True)
-stream_ds = stream_ds.shuffle(seed=42, buffer_size=10_000)
-
-# Wrap in a PyTorch IterableDataset for use with DataLoader
-from torch.utils.data import IterableDataset
 
 class StreamingTinyStories(IterableDataset):
-    def __init__(self, hf_iterable_dataset, tokenizer, block_size=512):
-        self.ds         = hf_iterable_dataset
+    def __init__(self, filepath, tokenizer, block_size=512):
+        self.filepath   = filepath
         self.tokenizer  = tokenizer
         self.block_size = block_size
         self.buffer     = []
 
     def __iter__(self):
-        for example in self.ds:
-            ids = self.tokenizer.encode(example["text"]) + [self.tokenizer.eos_token_id]
-            self.buffer.extend(ids)
-            while len(self.buffer) >= self.block_size + 1:
-                chunk = self.buffer[:self.block_size + 1]
-                self.buffer = self.buffer[self.block_size:]
-                x = torch.tensor(chunk[:-1], dtype=torch.long)
-                y = torch.tensor(chunk[1:],  dtype=torch.long)
-                yield x, y
-
-stream_dataset = StreamingTinyStories(stream_ds, tokenizer, block_size=256)
-stream_loader  = DataLoader(stream_dataset, batch_size=4)
-
-# Get one batch from the stream
-xb_stream, yb_stream = next(iter(stream_loader))
-print(f"Streaming batch shape: {xb_stream.shape}")
+        with open(self.filepath, encoding="utf-8") as f:
+            for line in f:
+                text = line.strip()
+                if not text:
+                    continue
+                ids = self.tokenizer.encode(text) + [self.tokenizer.eos_token_id]
+                self.buffer.extend(ids)
+                while len(self.buffer) >= self.block_size + 1:
+                    chunk = self.buffer[:self.block_size + 1]
+                    self.buffer = self.buffer[self.block_size:]
+                    x = torch.tensor(chunk[:-1], dtype=torch.long)
+                    y = torch.tensor(chunk[1:],  dtype=torch.long)
+                    yield x, y
 
 
-from transformers import pipeline
+if __name__ == "__main__":
+    from datasets import load_dataset, DatasetDict, Dataset as HFDataset
 
-print("Loading GPT-2 for synthetic story generation …")
-generator = pipeline("text-generation", model="gpt2", device=-1)   # -1 = CPU
+    os.makedirs(DATA_DIR, exist_ok=True)
 
-# Prompts for generating synthetic children's stories
-prompts = [
-    "Once upon a time, a little rabbit",
-    "There was a small village where",
-    "The friendly dragon wanted to",
-]
+    print("Loading TinyStories from local files ...")
+    with open(TRAIN_FILE, encoding="utf-8") as f:
+        train_stories = [{"text": line.strip()} for line in f if line.strip()]
+    with open(VAL_FILE, encoding="utf-8") as f:
+        val_stories = [{"text": line.strip()} for line in f if line.strip()]
 
-synthetic_stories = []
-for prompt in prompts:
-    output = generator(
-        prompt,
-        max_new_tokens = 100,
-        do_sample      = True,
-        temperature    = 0.8,
-        top_k          = 50,
-        num_return_sequences = 1,
-    )
-    story = output[0]["generated_text"]
-    synthetic_stories.append(story)
-    print(f"\nPrompt: {repr(prompt)}")
-    print(f"Story : {story[:200]}")
+    ds = DatasetDict({
+        "train":      HFDataset.from_list(train_stories),
+        "validation": HFDataset.from_list(val_stories),
+    })
 
-# Save synthetic stories for fine-tuning augmentation
-synth_file = os.path.join(DATA_DIR, "synthetic_stories.txt")
-with open(synth_file, "w") as f:
-    for story in synthetic_stories:
-        f.write(story.strip() + "\n")
-print(f"\nSaved {len(synthetic_stories)} synthetic stories → {synth_file}")
+    print(f"Train examples : {len(ds['train']):,}")
+    print(f"Val   examples : {len(ds['validation']):,}")
 
+    train_ds = TinyStoriesDataset(TRAIN_FILE, block_size=512)
+    print(f"Train blocks: {len(train_ds):,}")
 
-import re
+    xb, yb = train_ds[0]
+    print(f"x shape: {xb.shape}, y shape: {yb.shape}")
 
-def is_valid_story(text: str) -> bool:
-    """
-    Basic quality filter for TinyStories examples.
-    Removes very short, very long, or garbled stories.
-    """
-    if len(text) < 100 or len(text) > 5000:
-        return False
-    # Must contain some sentence-ending punctuation
-    if not re.search(r"[.!?]", text):
-        return False
-    # Reject if more than 20% non-ASCII
-    n_ascii = sum(c.isascii() for c in text)
-    if n_ascii / len(text) < 0.8:
-        return False
-    return True
+    loader = DataLoader(train_ds, batch_size=8, shuffle=True, collate_fn=collate_fn)
+    xb, yb = next(iter(loader))
+    print(f"Batch x shape: {xb.shape}  dtype: {xb.dtype}")
 
-# Apply filter to the small dataset
-before = len(small_ds)
-filtered_ds = small_ds.filter(is_valid_story, input_columns=["text"])
-after  = len(filtered_ds)
-print(f"Before filtering: {before:,}  |  After: {after:,}  |  Removed: {before-after:,}")
+    before = len(ds['train'])
+    filtered = [ex for ex in ds['train'] if is_valid_story(ex['text'])]
+    after = len(filtered)
+    print(f"Before filtering: {before:,}  |  After: {after:,}")
