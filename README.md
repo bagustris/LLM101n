@@ -52,7 +52,7 @@ LLM101n/
 └── llm101n.jpg
 ```
 
-> **Markdown is the source of truth.** `codes/chNN/main.py` files are generated artifacts — always edit the markdown chapter and re-run `extract.py`.
+> **Python files are the source of truth.** `codes/chNN/main.py` files are the codes to run for each chapter — code block in markdown files are generater by `inject.py`.
 
 ---
 
