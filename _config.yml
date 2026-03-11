@@ -1,0 +1,19 @@
+remote_theme: bagustris/primer2-theme
+title: "LLM101n: Let's Build a Storyteller"
+description: "An educational course building a storytelling LLM from scratch — from bigrams to multimodal transformers."
+
+plugins:
+  - jekyll-remote-theme
+  - jekyll-seo-tag
+  - jekyll-github-metadata
+
+exclude:
+  - codes/
+  - data/
+  - "*.log"
+  - CLAUDE.md
+  - Gemfile
+  - Gemfile.lock
+
+github:
+  private: false
