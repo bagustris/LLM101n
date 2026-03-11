@@ -18,8 +18,9 @@ for n in range(1, 18):
     combined = "\n\n".join(blocks)
 
     # Fix data directory paths to be relative to codes/chNN/
-    combined = combined.replace('DATA_DIR = "data"', 'DATA_DIR = "../data"')
-    combined = combined.replace("DATA_DIR = 'data'", "DATA_DIR = '../data'")
+    # Use regex to tolerate any amount of whitespace around the '=' sign
+    combined = re.sub(r'DATA_DIR\s*=\s*"data"', 'DATA_DIR = "../data"', combined)
+    combined = re.sub(r"DATA_DIR\s*=\s*'data'", "DATA_DIR = '../data'", combined)
     combined = combined.replace('"data/', '"../data/')
     combined = combined.replace("'data/", "'../data/")
 

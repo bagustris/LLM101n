@@ -1,3 +1,7 @@
+---
+nav_exclude: true
+---
+
 # LLM101n: Let's build a Storyteller
 
 ![LLM101n header image](llm101n.jpg)

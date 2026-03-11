@@ -41,10 +41,13 @@ class GenerateRequest(BaseModel):
     top_k:          int   = 40
 
 
+_HERE = os.path.dirname(os.path.abspath(__file__))
+
 @app.get("/")
 async def index():
     """Serve the frontend HTML page."""
-    return HTMLResponse(open("frontend.html").read())
+    frontend_path = os.path.join(_HERE, "frontend.html")
+    return HTMLResponse(open(frontend_path).read())
 
 
 @app.get("/health")
