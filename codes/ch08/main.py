@@ -1,89 +1,23 @@
 import torch
-import time
-
-device = "cuda" if torch.cuda.is_available() else "cpu"
-print(f"Using device: {device}")
-
-if device == "cuda":
-    print(f"GPU: {torch.cuda.get_device_name(0)}")
-    print(f"VRAM: {torch.cuda.get_device_properties(0).total_memory / 1e9:.1f} GB")
-    print(f"Compute capability: {torch.cuda.get_device_capability(0)}")
-else:
-    import platform
-    print(f"CPU: {platform.processor()}")
-    print("No GPU detected — timings will be CPU only.")
-
-
-# Create a tensor on CPU
-x_cpu = torch.randn(1024, 1024)
-print(f"x_cpu device: {x_cpu.device}")
-
-# Move to GPU
-x_gpu = x_cpu.to(device)
-print(f"x_gpu device: {x_gpu.device}")
-
-# Operations stay on the same device — mixing raises an error
-# x_cpu + x_gpu  ← RuntimeError
-
-# Move back to CPU for numpy / plotting
-x_back = x_gpu.cpu().numpy()
-print(f"Back on numpy: {x_back.shape}")
-
-# Moving the entire model
 import torch.nn as nn
-model = nn.Linear(512, 512)
-model = model.to(device)
-print(f"Model weight device: {next(model.parameters()).device}")
+import time
 
 
 def benchmark_matmul(size: int, device: str, n_runs: int = 50) -> float:
-    """Returns average time in milliseconds for (size, size) @ (size, size)."""
     A = torch.randn(size, size, device=device)
     B = torch.randn(size, size, device=device)
-
-    # Warm up (first run has JIT / kernel launch overhead)
     for _ in range(5):
         _ = A @ B
     if device == "cuda":
-        torch.cuda.synchronize()   # wait for GPU to finish before timing
-
+        torch.cuda.synchronize()
     start = time.perf_counter()
     for _ in range(n_runs):
         C = A @ B
     if device == "cuda":
         torch.cuda.synchronize()
-    elapsed = (time.perf_counter() - start) * 1000 / n_runs   # ms
+    elapsed = (time.perf_counter() - start) * 1000 / n_runs
     return elapsed
 
-sizes = [128, 256, 512, 1024, 2048, 4096]
-print(f"{'Size':>6}  {'CPU (ms)':>10}  {'GPU (ms)':>10}  {'Speedup':>8}")
-print("-" * 42)
-for s in sizes:
-    cpu_ms = benchmark_matmul(s, "cpu", n_runs=10)
-    gpu_ms = benchmark_matmul(s, device, n_runs=50) if device == "cuda" else cpu_ms
-    speedup = cpu_ms / gpu_ms if device == "cuda" else 1.0
-    print(f"{s:6d}  {cpu_ms:10.2f}  {gpu_ms:10.2f}  {speedup:7.1f}×")
-
-
-if device == "cuda":
-    torch.cuda.empty_cache()
-
-    # Allocate a large tensor
-    x = torch.randn(4096, 4096, device="cuda")
-    print(f"Allocated: {torch.cuda.memory_allocated() / 1e6:.1f} MB")
-    print(f"Reserved : {torch.cuda.memory_reserved()  / 1e6:.1f} MB")
-
-    del x
-    torch.cuda.empty_cache()
-    print(f"After del: {torch.cuda.memory_allocated() / 1e6:.1f} MB")
-
-    # Memory summary
-    print(torch.cuda.memory_summary(abbreviated=True))
-else:
-    print("Skipping GPU memory profiling (no CUDA device)")
-
-
-import torch
 
 class SmallTransformer(nn.Module):
     def __init__(self, d_model=256, n_heads=4, n_layers=4, vocab=1000):
@@ -99,71 +33,34 @@ class SmallTransformer(nn.Module):
     def forward(self, x):
         return self.head(self.transformer(self.emb(x)))
 
-model_eager   = SmallTransformer().to(device).eval()
-model_compiled = torch.compile(model_eager)    # may take ~30s first call
 
-x = torch.randint(0, 1000, (8, 128), device=device)
-
-# Benchmark eager vs compiled
 def time_model(m, x, n=30):
-    for _ in range(5): m(x)   # warm up
-    if device == "cuda": torch.cuda.synchronize()
+    device_str = str(next(m.parameters()).device)
+    for _ in range(5):
+        m(x)
+    if "cuda" in device_str:
+        torch.cuda.synchronize()
     t0 = time.perf_counter()
-    for _ in range(n): m(x)
-    if device == "cuda": torch.cuda.synchronize()
+    for _ in range(n):
+        m(x)
+    if "cuda" in device_str:
+        torch.cuda.synchronize()
     return (time.perf_counter() - t0) * 1000 / n
 
-with torch.no_grad():
-    eager_ms    = time_model(model_eager,    x)
-    compiled_ms = time_model(model_compiled, x)
 
-print(f"Eager    : {eager_ms:.2f} ms")
-print(f"Compiled : {compiled_ms:.2f} ms")
-print(f"Speedup  : {eager_ms / compiled_ms:.2f}×")
+if __name__ == "__main__":
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    print(f"Using device: {device}")
 
+    sizes = [128, 256, 512, 1024]
+    print(f"{'Size':>6}  {'CPU (ms)':>10}")
+    for s in sizes:
+        cpu_ms = benchmark_matmul(s, "cpu", n_runs=10)
+        print(f"{s:6d}  {cpu_ms:10.2f}")
 
-from torch.utils.data import DataLoader, TensorDataset
+    model_eager = SmallTransformer().to(device).eval()
+    x = torch.randint(0, 1000, (8, 128), device=device)
 
-N = 100_000
-X = torch.randint(0, 1000, (N, 64))
-Y = torch.randint(0, 1000, (N,))
-
-dataset = TensorDataset(X, Y)
-
-# pin_memory=True allows async CPU→GPU transfer via DMA
-# num_workers > 0 loads batches in parallel background processes
-loader_slow = DataLoader(dataset, batch_size=256, pin_memory=False, num_workers=0)
-loader_fast = DataLoader(dataset, batch_size=256, pin_memory=True,  num_workers=2)
-
-def time_loader(loader, label):
-    t0 = time.perf_counter()
-    for xb, yb in loader:
-        xb = xb.to(device, non_blocking=True)
-        yb = yb.to(device, non_blocking=True)
-    elapsed = (time.perf_counter() - t0) * 1000
-    print(f"{label}: {elapsed:.0f} ms")
-
-time_loader(loader_slow, "Standard loader")
-time_loader(loader_fast, "Pinned+async loader")
-
-
-from torch.profiler import profile, record_function, ProfilerActivity
-
-model_eager = model_eager.train()
-optim = torch.optim.AdamW(model_eager.parameters(), lr=1e-3)
-
-activities = [ProfilerActivity.CPU]
-if device == "cuda":
-    activities.append(ProfilerActivity.CUDA)
-
-with profile(activities=activities, record_shapes=True) as prof:
-    with record_function("forward"):
-        out  = model_eager(x)
-        loss = out.sum()
-    with record_function("backward"):
-        loss.backward()
-    with record_function("optimizer"):
-        optim.step()
-        optim.zero_grad()
-
-print(prof.key_averages().table(sort_by="cpu_time_total", row_limit=10))
+    with torch.no_grad():
+        eager_ms = time_model(model_eager, x)
+    print(f"Eager model: {eager_ms:.2f} ms")
