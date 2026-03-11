@@ -1,5 +1,4 @@
 ---
-nav_exclude: true
 ---
 
 # LLM101n: Let's build a Storyteller
@@ -42,17 +41,18 @@ The training corpus throughout is [TinyStories](https://huggingface.co/datasets/
 
 ```
 LLM101n/
-├── chNN.md          # Chapter narratives + embedded Python code (source of truth)
+├── chNN.md          # Chapter narratives + embedded Python code (kept in sync via inject.py)
 ├── codes/
-│   ├── extract.py   # Extracts Python blocks from chNN.md → codes/chNN/main.py
+│   ├── inject.py    # Syncs named blocks from codes/chNN/main.py → chNN.md
+│   ├── extract.py   # Legacy: extracted markdown → main.py (no longer the active workflow)
 │   ├── chNN/
-│   │   ├── main.py  # Auto-generated runnable script (do not edit manually)
+│   │   ├── main.py  # Runnable script — SOURCE OF TRUTH for code
 │   │   └── run.log  # Expected output
 │   └── data/        # Shared datasets, checkpoints, tokenizers
 └── llm101n.jpg
 ```
 
-> **Python files are the source of truth.** `codes/chNN/main.py` files are the codes to run for each chapter — code block in markdown files are generater by `inject.py`.
+> **`codes/chNN/main.py` is the source of truth.** Edit the Python scripts directly; run `inject.py` to sync changes back into the markdown chapter files.
 
 ---
 
@@ -76,13 +76,6 @@ source codes/.venv/bin/activate   # Windows: codes\.venv\Scripts\activate
 pip install torch datasets transformers tqdm fastapi uvicorn
 ```
 
-### Extracting code from the markdown chapters
-
-```bash
-cd codes
-python extract.py   # writes codes/chNN/main.py for all 17 chapters
-```
-
 ### Running a chapter
 
 ```bash
@@ -92,6 +85,20 @@ python main.py
 ```
 
 Each chapter is self-contained. Chapter 01 downloads the TinyStories dataset on first run and saves it to `codes/data/` so subsequent chapters can reuse it without hitting the network again.
+
+### Editing code and syncing to markdown
+
+`codes/chNN/main.py` is the source of truth. Edit it directly, then sync named blocks back into the chapter markdown:
+
+```bash
+cd codes
+python inject.py            # sync all chapters
+python inject.py ch05       # sync one chapter
+python inject.py --dry-run  # preview diffs without writing
+python inject.py --status   # show which blocks are marked
+```
+
+> **Note on block markers:** In `main.py`, wrap editable sections with `# === block: <name> ===` / `# === /block: <name> ===`. In the markdown, wrap the matching fence with `<!-- block: <name> -->` / `<!-- /block: <name> -->`. `inject.py` will replace only those fenced regions.
 
 ---
 

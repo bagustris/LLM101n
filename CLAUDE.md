@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-**LLM101n: Let's build a Storyteller** — an educational course building a storytelling LLM from scratch. Each of the 17 chapters is a standalone markdown file (`chNN.md`) containing prose and embedded Python code blocks. These are extracted into runnable scripts under `codes/chNN/main.py`.
+**LLM101n: Let's build a Storyteller** — an educational course building a storytelling LLM from scratch. Each of the 17 chapters is a standalone markdown file (`chNN.md`) containing prose and embedded Python code blocks. The runnable scripts live under `codes/chNN/main.py`.
 
 ## Running Code
 
@@ -22,22 +22,49 @@ cd codes/ch01 && python main.py
 
 Shared data (TinyStories dataset, model checkpoints, tokenizers) lives in `codes/data/` and is referenced as `../data/` from within each chapter directory.
 
-## Extracting Code from Markdown
+## Workflow: Editing Code → Syncing to Markdown
 
-When a chapter markdown file is updated, re-extract the code with:
+**`codes/chNN/main.py` is the source of truth.** Edit the Python scripts directly, then run `inject.py` to sync named blocks back into the corresponding markdown file.
 
 ```bash
-cd codes && python extract.py
+cd codes && python inject.py          # sync all chapters
+cd codes && python inject.py ch05     # sync one chapter
+cd codes && python inject.py --dry-run  # preview diffs without writing
+cd codes && python inject.py --status   # show which blocks are marked
 ```
 
-`extract.py` scans `ch01.md`–`ch17.md` at the repo root, concatenates all ` ```python ` blocks from each file, rewrites `"data"` path references to `"../data"`, and writes to `codes/chNN/main.py`.
+### How inject.py works
+
+Blocks in `main.py` are delimited by markers:
+
+```python
+# === block: training_loop ===
+for step in range(max_steps):
+    ...
+# === /block: training_loop ===
+```
+
+The corresponding markdown fence must have matching HTML comment markers:
+
+```markdown
+<!-- block: training_loop -->
+```python
+for step in range(max_steps):
+    ...
+` `` `
+<!-- /block: training_loop -->
+```
+
+`inject.py` replaces the code inside each markdown fence with the current content from `main.py`. Prose between blocks is never touched.
+
+> **Note:** `extract.py` (the old reverse tool that generated `main.py` from markdown) is kept for reference but is no longer the active workflow.
 
 ## Architecture
 
 ### Chapter Structure
 Each chapter is self-contained:
-- `chNN.md` — narrative + embedded Python code blocks (source of truth)
-- `codes/chNN/main.py` — auto-extracted runnable script (do not manually edit; re-extract from markdown)
+- `codes/chNN/main.py` — runnable script, source of truth for code
+- `chNN.md` — narrative + embedded Python code blocks (kept in sync via `inject.py`)
 - `codes/chNN/run.log` — expected output from running the script
 
 ### Shared Data (`codes/data/`)
@@ -77,6 +104,6 @@ Each chapter is self-contained:
 
 ## Key Conventions
 
-- **Markdown is the source of truth.** `main.py` files are generated artifacts. When fixing bugs in chapter code, edit the markdown and re-run `extract.py`.
+- **`main.py` is the source of truth.** When fixing bugs in chapter code, edit `codes/chNN/main.py` and re-run `inject.py` to sync the markdown.
 - All chapters share `codes/data/`; paths in scripts are always `../data/` relative to the chapter dir.
 - No `requirements.txt` exists — the `.venv` at `codes/.venv/` has all dependencies installed.
