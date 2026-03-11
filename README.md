@@ -1,4 +1,6 @@
 ---
+permalink: /
+nav_exclude: true
 ---
 
 # LLM101n: Let's build a Storyteller
