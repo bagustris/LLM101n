@@ -9,7 +9,7 @@ nav_exclude: true
 
 > What I cannot create, I do not understand. — Richard Feynman
 
-In this course we build a Storyteller AI Large Language Model (LLM) from scratch — from a one-line bigram model all the way to a deployed, multimodal web app. Everything is implemented end-to-end in Python with minimal prerequisites. By the end you will have a deep, hands-on understanding of how modern LLMs work.
+In this course, we build a Storyteller AI Large Language Model (LLM) from scratch — from a one-line bigram model all the way to a deployed, multimodal web app. Everything is implemented end-to-end in Python with minimal prerequisites. By the end you will have a deep, hands-on understanding of how modern LLMs work.
 
 The training corpus throughout is [TinyStories](https://huggingface.co/datasets/roneneldan/TinyStories) — a dataset of short children's stories — keeping experiments fast enough to run on a laptop while still producing meaningful results.
 
@@ -68,14 +68,14 @@ LLM101n/
 ### Setup
 
 ```bash
-git clone https://github.com/karpathy/LLM101n.git
+git clone https://github.com/bagustris/LLM101n.git
 cd LLM101n
 
 # Create and activate the virtual environment
-python -m venv codes/.venv
+uv venv codes/.venv
 source codes/.venv/bin/activate   # Windows: codes\.venv\Scripts\activate
 
-pip install torch datasets transformers tqdm fastapi uvicorn
+uv pip install torch datasets transformers tqdm fastapi uvicorn
 ```
 
 ### Running a chapter
@@ -86,7 +86,7 @@ cd codes/ch01
 python main.py
 ```
 
-Each chapter is self-contained. Chapter 01 downloads the TinyStories dataset on first run and saves it to `codes/data/` so subsequent chapters can reuse it without hitting the network again.
+Each chapter is self-contained. Chapter 01 downloads the TinyStories dataset on the first run and saves it to `codes/data/` so subsequent chapters can reuse it without hitting the network again.
 
 ### Editing code and syncing to markdown
 
